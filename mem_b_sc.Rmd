@@ -1,0 +1,1820 @@
+---
+title: "SLE_LZ-DZ_singlecell"
+author: "Arthur VanValkenburg"
+date: "2022-09-02"
+output: powerpoint_presentation
+---
+
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(edgeR)
+  library(sva)
+  library(SingleCellExperiment)
+  library(DESeq2)
+  library(DT)
+  library(umap)
+  library(ggplot2)
+  library(ComplexHeatmap)
+  library(tidyverse)
+  library(Seurat)
+  library(SeuratObject)
+  library(SeuratWrappers)
+  library(patchwork)
+  library(cowplot)
+  library(RColorBrewer)
+  library(plotly)
+  library(scRepertoire)
+  #library(Azimuth)
+})
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(dpi = 300)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+# Load data
+```{r}
+# 2 samples
+## read in counts
+sample1 <- file.path("data/Chan_513/sample1_outs/per_sample_outs/Sample1/count/sample_filtered_feature_bc_matrix")
+sample2 <- file.path("data/Chan_513/sample2_outs/per_sample_outs/Sample2/count/sample_filtered_feature_bc_matrix")
+sample3 <- file.path("data/Chan_328/per_sample_outs/Sample/count/sample_filtered_feature_bc_matrix")
+
+sample4 <- file.path("data/Chan_531/sample1_outs/per_sample_outs/Sample1/count/sample_filtered_feature_bc_matrix") #TB
+sample5 <- file.path("data/Chan_531/sample2_outs/per_sample_outs/Sample2/count/sample_filtered_feature_bc_matrix") #LTBI
+
+
+# read in clonotype
+sample1.clono <- read.csv(file.path("data/Chan_513/sample1_outs/per_sample_outs/Sample1/vdj_b/filtered_contig_annotations.csv"))
+sample2.clono <- read.csv(file.path("data/Chan_513/sample2_outs/per_sample_outs/Sample2/vdj_b/filtered_contig_annotations.csv"))
+sample3.clono <- read.csv(file.path("data/Chan_328/per_sample_outs/Sample/vdj_b/filtered_contig_annotations.csv"))
+sample4.clono <- read.csv(file.path("data/Chan_531/sample1_outs/per_sample_outs/Sample1/vdj_b/filtered_contig_annotations.csv"))
+sample5.clono <- read.csv(file.path("data/Chan_531/sample2_outs/per_sample_outs/Sample2/vdj_b/filtered_contig_annotations.csv"))
+
+## counts list
+path_ls <- list("ATB2"=sample1, "LTBI2"=sample2, "LTBI1"=sample3, "ATB3"=sample4, "LBTI3"=sample5)
+
+# Load the PBMC dataset
+pbmc.data <- lapply(path_ls, Read10X)
+
+
+#Initialize the Seurat object with the raw (non-normalized data).
+pbmc.ls <- mapply(function(x,y) CreateSeuratObject(counts=x,
+                                                   project = y,
+                                                   min.cells = 3,
+                                                   min.features = 200), pbmc.data, names(pbmc.data))
+
+# remove objects to save memory
+rm(pbmc.data)
+```
+
+
+## Make Seurat obj
+
+
+
+# QC 
+## QC 
+```{r}
+
+for(i in 1:length(pbmc.ls)){
+  pbmc.ls[[i]][["percent.mt"]] <- PercentageFeatureSet(pbmc.ls[[i]], pattern="^MT-")
+}
+
+
+# Visualize QC metrics as a violin plot
+
+lapply(pbmc.ls, VlnPlot, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+### Plot S1
+```{r}
+pbmc <- pbmc.ls[[1]]
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=2000) +
+          geom_vline(xintercept = 130000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+```
+#### Filtering
+```{r}
+table(pbmc$orig.ident)
+# Filter from Loupe object; removes NAs
+pbmc <- subset(pbmc, subset=nFeature_RNA>2000 & nCount_RNA < 130000  & percent.mt < 8)
+# 
+table(pbmc$orig.ident) #5438 before filter, 4751 after
+```
+
+#### Filtering graphs
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=2000) +
+          geom_vline(xintercept = 130000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+
+
+```
+
+#### Save
+```{r}
+pbmc.ls[[1]] <- pbmc
+```
+
+
+### Plot S2
+```{r}
+pbmc <- pbmc.ls[[2]]
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=10) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=200) +
+          geom_vline(xintercept = 100000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+```
+#### Filtering
+```{r}
+
+#pbmc.1 <- subset(pbmc, subset=nCount_RNA >200 & nCount_RNA < 4500 & percent.mt < 8 )
+# Filter from Loupe object; removes NAs
+pbmc <- subset(pbmc, subset=nFeature_RNA>200 & nCount_RNA < 100000  & percent.mt < 10)
+# 
+table(pbmc.ls[[2]]$orig.ident)
+table(pbmc$orig.ident) #19194 before filter, 18677 after
+```
+
+#### Filtering graphs
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=10) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=200) +
+          geom_vline(xintercept = 100000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+
+
+```
+
+#### Save
+```{r}
+pbmc.ls[[2]] <- pbmc
+```
+
+
+### Plot S3
+```{r}
+pbmc <- pbmc.ls[[3]]
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=12) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=200) +
+          geom_vline(xintercept = 55000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+```
+#### Filtering
+```{r}
+
+#pbmc.1 <- subset(pbmc, subset=nCount_RNA >200 & nCount_RNA < 4500 & percent.mt < 8 )
+# Filter from Loupe object; removes NAs
+pbmc <- subset(pbmc, subset=nFeature_RNA>200 & nCount_RNA < 55000  & percent.mt < 12)
+# 
+table(pbmc.ls[[3]]$orig.ident)
+table(pbmc$orig.ident) #20837 before filter, 20699 after
+```
+
+#### Filtering graphs
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=12) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=200) +
+          geom_vline(xintercept = 55000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+
+
+```
+
+#### Save
+```{r}
+pbmc.ls[[3]] <- pbmc
+```
+
+
+### Plot S4
+```{r}
+pbmc <- pbmc.ls[[4]]
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=2500) +
+          geom_vline(xintercept = 60000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+```
+#### Filtering
+```{r}
+table(pbmc$orig.ident) #6144
+#pbmc.1 <- subset(pbmc, subset=nCount_RNA >200 & nCount_RNA < 4500 & percent.mt < 8 )
+# Filter from Loupe object; removes NAs
+pbmc <- subset(pbmc, subset=nFeature_RNA>2500 & nCount_RNA < 60000  & percent.mt < 8)
+# 
+table(pbmc$orig.ident) #6009
+```
+
+#### Filtering graphs
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=2500) +
+          geom_vline(xintercept = 60000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+
+
+```
+
+#### Save
+```{r}
+pbmc.ls[[4]] <- pbmc
+```
+
+
+### Plot S5
+```{r}
+pbmc <- pbmc.ls[[5]]
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=200) +
+          geom_vline(xintercept = 45000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+```
+#### Filtering
+```{r}
+
+#pbmc.1 <- subset(pbmc, subset=nCount_RNA >200 & nCount_RNA < 4500 & percent.mt < 8 )
+# Filter from Loupe object; removes NAs
+pbmc <- subset(pbmc, subset=nFeature_RNA>2000 & nCount_RNA < 45000  & percent.mt < 8)
+# 
+table(pbmc.ls[[5]]$orig.ident)
+table(pbmc$orig.ident) #7498 before filter, 7438 after
+```
+
+#### Filtering graphs
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+          geom_hline(yintercept=8) + 
+          geom_vline(xintercept = 8000) +
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+          geom_smooth(method="lm") +
+          geom_hline(yintercept=2000) +
+          geom_vline(xintercept = 45000) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+plot1 + plot2
+
+
+
+```
+
+#### Save
+```{r}
+pbmc.ls[[5]] <- pbmc
+```
+
+
+
+
+# Get Barcodes from filtered data
+```{r}
+# list of barcodes
+barcodes.ls <- lapply(pbmc.ls, Idents)
+
+# only barcodes, not named factor
+barcodes.ls <- lapply(barcodes.ls, names)
+
+#save barcodes
+saveRDS(barcodes.ls, "barcodes.RDS")
+```
+
+# Seurat pipeline
+
+# Integrate
+```{r}
+# remove LTBI1 from analysis
+pbmc.ls[["LTBI1"]] <- NULL
+# Normalize and scale data
+pbmc.ls <- lapply(pbmc.ls, SCTransform, 
+                  vars.to.regress="percent.mt", # not a substitute for batch correction
+                  variable.features.n = 3000, # default is 3000
+                  return.only.var.genes	=T) 
+
+
+# select integration features and prep step
+features <- SelectIntegrationFeatures(pbmc.ls)
+pbmc.ls <- PrepSCTIntegration(
+  pbmc.ls,
+  anchor.features = features
+)
+
+# downstream integration steps
+anchors <- FindIntegrationAnchors(
+  pbmc.ls,
+  normalization.method = "SCT",
+  anchor.features = features
+)
+merged.obj <- IntegrateData(anchors, normalization.method = "SCT")
+
+
+# clear memory
+rm(pbmc.ls, plot1, plot2, anchors)
+
+# save merged object
+saveRDS(merged.obj, "data_processed/merged_memB.RDS")
+```
+
+
+
+## Integrated or join?
+```{r}
+merged.obj <- readRDS("data_processed/merged_memB.RDS")
+merged.obj <- RunPCA(merged.obj) # uses PCA to join layers
+options(future.globals.maxSize = 64000 * 1024^2) # allocates memory to 5G RAM; might need to increase depending on size
+
+DefaultAssay(merged.obj) <- "integrated"
+merged.obj@active.assay <- "SCT"
+merged.obj <- IntegrateLayers(object = merged.obj, method = RPCAIntegration, normalization.method = "SCT", verbose = F)
+
+merged.obj <- FindNeighbors(merged.obj, reduction = "integrated.dr", dims = 1:30)
+merged.obj <- RunUMAP(merged.obj, reduction="integrated.dr", dims = 1:30)
+merged.obj <- FindClusters(merged.obj, resolution = 0.6, graph.name = "integrated_snn")#,cluster.name = "sct_clusters")
+
+```
+
+
+
+
+
+## Integration
+Integrate the two memB samples enriched for MTB antigen recognition for differential expression analysis
+```{r}
+
+merged.obj <- PrepSCTFindMarkers(merged.obj, assay = "SCT", verbose = TRUE)
+merged.obj$orig.ident <- gsub("LBTI3", "LTBI3", merged.obj$orig.ident)
+merged.obj$status <- ifelse(grepl("LTB", merged.obj$orig.ident), "LTBI", "TB")
+
+Idents(merged.obj) <- merged.obj$status
+markers <- FindMarkers(
+  object = merged.obj,
+  ident.1 = "TB",
+  ident.2 = "LTBI",
+  assay = "SCT", 
+  logfc.threshold = 0.9,
+  method="wilcox",
+)
+#dir.create("outs/diffex/")
+markers.sig <- filter(markers, p_val_adj < 0.0001)
+write.csv(markers.sig, "outs/diffex/diffex_tb_vs_ltbi_enriched_mtb_membcells.csv")
+DefaultAssay(merged.obj)
+
+
+merged.obj <- FindNeighbors(merged.obj, reduction = "integrated.dr", dims = 1:30)
+merged.obj <- RunUMAP(merged.obj, reduction="integrated.dr", dims = 1:30)
+DefaultAssay(merged.obj) <- "integrated"
+merged.obj <- FindClusters(merged.obj, resolution = 0.6)
+saveRDS(merged.obj, "data_processed/merged_SCT_obj.RDS")
+#######
+
+
+```
+
+## UMAP
+```{r}
+p1 <- DimPlot(
+  merged.obj,
+  reduction = "umap",
+  split.by="orig.ident",
+  group.by = c( "seurat_clusters"),
+  combine = FALSE, label.size = 2, label = T
+)
+p1
+ggsave("outs/dim_reduction/umap_res_06_split_by_sample.png", width=21, height=7)
+
+p2 <- DimPlot(
+  merged.obj,
+  reduction = "umap",
+  split.by="status",
+  group.by = c( "seurat_clusters"),
+  combine = FALSE, label.size = 2, label = T
+)
+p2
+
+ggsave("outs/dim_reduction/umap_res_06_split_by_status.png", width=14, height=7)
+
+#ggsave("outs/dim_reduction/umap_res_06_tb-ltbi.svg", width=5, height=3.5)
+#ggsave("outs/dim_reduction/umap_res_06_tb-ltbi.png", width=5, height=3.5)
+```
+
+## cells perentage by cluster
+```{r}
+library(data.table)
+md <- merged.obj@meta.data %>% as.data.table
+# the resulting md object has one "row" per cell
+
+## count the number of cells per unique combinations of "Sample" and "seurat_clusters"
+x <- md[, .N, by = c("orig.ident", "seurat_clusters")]%>% dcast(., orig.ident ~ seurat_clusters, value.var = "N")
+
+x <- column_to_rownames(x, var="orig.ident")
+y <- x/rowSums(x, na.rm=T)
+# #write.csv(y, file.path(path, "cell_percentage_by_cluster.csv"))
+# #write.csv(x, file.path(path, "cell_number_by_cluster.csv"))
+y <- rownames_to_column(y, var="time")
+
+
+z <- melt(y)
+z[is.na(z)] <- 0
+colnames(z) <- c("time", "cluster", "percentage")
+
+
+ggplot(z, aes(x=cluster, y=time, size=percentage))+geom_point()
+#ggsave(file.path(path, "cell_percentage_dotplot.svg"),width=7, height=7, device="svg")
+#ggsave(file.path(path, "cell_percentage_dotplot.png"),width=7, height=7, device="png")
+
+
+
+
+```
+
+### Barplot of percentage cells within each cluster by time
+```{r}
+p <- ggplot(data=z, aes(x=cluster, y=percentage, fill=time)) +
+geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()+ scale_fill_brewer(palette="Set1") +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# Use brewer color palettes
+p 
+
+#ggsave("outs/cluster_dynamics/barplot_by_cluster_percentage.svg")
+ggsave("outs/cluster_dynamics/barplot_by_cluster_percentage_splitby_sample.png")
+
+```
+
+```{r}
+x <- md[, .N, by = c("status", "seurat_clusters")]%>% dcast(., status ~ seurat_clusters, value.var = "N")
+
+x <- column_to_rownames(x, var="status")
+y <- x/rowSums(x, na.rm=T)
+# #write.csv(y, file.path(path, "cell_percentage_by_cluster.csv"))
+# #write.csv(x, file.path(path, "cell_number_by_cluster.csv"))
+y <- rownames_to_column(y, var="time")
+
+
+z <- melt(y)
+z[is.na(z)] <- 0
+colnames(z) <- c("time", "cluster", "percentage")
+
+p <- ggplot(data=z, aes(x=cluster, y=percentage, fill=time)) +
+geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()+ scale_fill_brewer(palette="Set1") +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# Use brewer color palettes
+p 
+
+#ggsave("outs/cluster_dynamics/barplot_by_cluster_percentage.svg")
+ggsave("outs/cluster_dynamics/barplot_by_cluster_percentage_splitby_status.png")
+
+```
+
+## Select Genes
+```{r}
+# genes to plot
+
+
+DoHeatmap(merged.obj, features=row.names(markers.sig), group.by = "orig.ident")
+```
+# clusters 3,4,5,9, and 14 had large differences
+## load data
+```{r}
+merged.obj <- readRDS("data_processed/merged_SCT_obj.RDS")
+```
+
+## Diffex by cluster
+look at diffex genes between these clusters (LTBI vs TB)
+```{r}
+
+# Take all cells by cluster, and find markers that separate cells by status (metadata
+# variable 'status')
+Idents(merged.obj) <- merged.obj$seurat_clusters
+markers.3 <- FindMarkers(subset, ident.1 = "TB", ident.2="LTBI", group.by = 'status', subset.ident ="3", recorrect_umi=F)
+head(x = markers)
+
+clusters <- levels(merged.obj)
+clusters <- sapply(clusters,as.numeric)
+markers <- lapply(clusters, function(x) FindMarkers(merged.obj, ident.1 = "TB", ident.2="LTBI", group.by = 'status', subset.ident =x, recorrect_umi=F))
+clusters <- sapply(clusters, function(x) paste0("cluster_",x))
+names(markers) <- clusters
+
+#dir.create("outs/diffex/")
+path <- file.path("outs/diffex")
+paths <- sapply(clusters, function(x) file.path(path, paste0(x, "_diffex.csv")))
+mapply(write.csv, markers, paths)
+```
+
+
+## Diffex by cluster by experiment
+### Experiment 2
+look at diffex genes between these clusters (LTBI vs TB)
+```{r}
+
+# Take all cells by cluster, and find markers that separate cells by status (metadata
+# variable 'status')
+Idents(merged.obj) <- merged.obj$seurat_clusters
+
+# get levels of clusters
+clusters <- levels(merged.obj)
+clusters <- sapply(clusters,as.numeric)
+clust <- c(0:13, 15:16)
+# remove cluster 14 as it only has 1 cell
+#clusters["14"] <- NULL
+# subset by experiment
+data <- subset(merged.obj, orig.ident=="ATB2"|orig.ident=="LTBI2")
+markers.2 <- lapply(clust, function(x) FindMarkers(data, ident.1 = "TB", ident.2="LTBI", group.by = 'status', subset.ident =x, recorrect_umi=F))
+clusters <- sapply(clust, function(x) paste0("cluster_",x))
+names(markers.2) <- clusters
+
+#dir.create("outs/diffex/")
+#path <- file.path("outs/diffex/experiment_2")
+paths <- sapply(clusters, function(x) file.path(path, paste0(x, "_diffex.csv")))
+mapply(write.csv, markers, paths)
+```
+
+
+### Experiment 3
+look at diffex genes between these clusters (LTBI vs TB)
+```{r}
+
+# Take all cells by cluster, and find markers that separate cells by status (metadata
+# variable 'status')
+
+clusters <- levels(merged.obj)
+clusters <- sapply(clusters,as.numeric)
+data <- subset(merged.obj, orig.ident=="ATB3"|orig.ident=="LTBI3")
+markers <- lapply(clusters, function(x) FindMarkers(data, ident.1 = "TB", ident.2="LTBI", group.by = 'status', subset.ident =x, recorrect_umi=F))
+clusters <- sapply(clusters, function(x) paste0("cluster_",x))
+names(markers) <- clusters
+
+#dir.create("outs/diffex/")
+path <- file.path("outs/diffex/experiment_3")
+paths <- sapply(clusters, function(x) file.path(path, paste0(x, "_diffex.csv")))
+mapply(write.csv, markers, paths)
+```
+## compare by cluster
+```{r}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+markers.3 <- lapply(markers, rownames_to_column, var="genes")
+markers.2 <- lapply(markers.2, rownames_to_column, var="genes")
+
+markers.3$cluster_14 <- NULL # removing cluster_14 diffex because only 1 cell was in cluster 14 in ATB2
+
+# markers.2 <- lapply(markers.2, filter, p_val_adj<0.5)
+# markers.3 <- lapply(markers.3, filter, p_val_adj<0.5)
+
+# calculate similarity of genes in each cluster
+same_genes <- mapply(function(x,y) length(intersect(x$genes, y$genes)), markers.2, markers.3, SIMPLIFY=T)
+df.3.2 <- mapply(function(x,y) length(setdiff(x$genes, y$genes)), markers.3,  markers.2,SIMPLIFY=T)
+df.2.3 <- mapply(function(x,y) length(setdiff(x$genes, y$genes)), markers.2, markers.3, SIMPLIFY=T)
+
+tab <- data.frame(same=same_genes,
+                 in_3_not_2=df.3.2,
+                 in_2_not_3=df.2.3,
+                 total_2=sapply(markers.2, nrow),
+                 total_3=sapply(markers.3, nrow))
+tab <- tab %>% mutate(percent_same_in_2=same/total_2,
+                      percent_same_in_3=same/total_3)
+write.csv(tab, "similar_genes_by_cluster.csv")
+```
+
+
+# GSEA for msigdb pathways by cluster
+```{r}
+library(msigdbr)
+library(fgsea)
+
+# make path for outputs
+path <- file.path("outs", "gsea_outs")
+#dir.create(path)
+# load data
+#merged.obj <- readRDS("data_processed/merged_SCT_obj.RDS")
+
+# genesets
+genesets_h <- msigdbr(category="H") # hallmark genesets
+genesets_c2 <- msigdbr(category="C2", subcategory = "CP") # curated sets from KEGG, reactome, and others
+genesets_c6 <- msigdbr(category="C6") # cancer sets
+genesets_c7 <- msigdbr(category="C7") # immune-specific genesets
+```
+## Process DEG data
+```{r}
+# dataframe of differentially expressed genes
+df <- mapply(function(x,y) mutate(x, cluster=y), markers, names(markers), SIMPLIFY=F)
+df <- lapply(df, rownames_to_column, var="gene")
+#df <- do.call(rbind, df)
+
+# add ranking column (plog)
+df <- lapply(df, mutate,plog=-log(p_val)*avg_log2FC)
+
+# get rid of Inf and -Inf values
+df.1 <- lapply(df,function(x)sum(is.infinite(x$plog))) # only cluster_0 has an Inf values
+df$cluster_0$plog[1] <-  -log(df$cluster_0$p_val[2])*df$cluster_0$avg_log2FC[1] # replaced with the lowest non-zero p-val * avg_log2FC of that gene
+
+# arrange by descending order
+gene.ls <- df %>% 
+  lapply(arrange, desc(plog)) %>% 
+  lapply(select, gene, plog) %>% 
+  lapply(function(x) {z <- x$plog
+         names(z) <- x$gene
+         return(z)})
+```
+
+## halmark gene sets
+```{r}
+# database to look at
+msig.db <- genesets_h
+# split into list 
+msig.ls <- split(x=msig.db$gene_symbol, f=msig.db$gs_name)
+
+
+
+# gsea results by cluster
+fgseaRes0 <- fgsea(pathways=msig.ls,
+                   stats=gene.ls$cluster_0, 
+                                    minSize = 15,
+                                    maxSize = 500)
+set.seed(0)
+fgseaRes <- lapply(gene.ls, function(x){
+                              fgsea(pathways=msig.ls,
+                                    stats=x, 
+                                    minSize = 15,
+                                    maxSize = 500,nPermSimple = 10000)
+})
+# select only significant pathways
+fgseaRes.2 <- lapply(fgseaRes, filter, pval<0.05)
+# add -log10(pval) column for dotplot
+fgseaRes.2 <- lapply(fgseaRes.2, mutate, neg_log=-log10(pval))
+```
+
+### plot by cluster
+```{r}
+g <- lapply(fgseaRes.2, function(x){
+            ggplot(x, mapping=aes(x=reorder(pathway, neg_log),y=neg_log, fill=NES))+
+              geom_bar(stat="identity") +
+              scale_fill_gradient2(low="blue", mid="white", high="red")+
+              geom_hline(yintercept=-log10(0.05), linetype=2)+
+              coord_flip()
+  })
+g
+```
+### save plots
+```{r}
+# path to save
+db <- "hallmark_genesets"
+path1 <- file.path(path, db)
+dir.create(path1) 
+
+# file names for each
+png_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".png")))
+svg_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".svg")))
+
+# save files
+mapply(ggsave, png_outs, g, device="png", width=7, height=7)
+mapply(ggsave, svg_outs, g, device="svg", width=7, height=7)
+```
+
+## C2, curated sets
+```{r}
+# database to look at
+msig.db <- genesets_c2 # curated sets from KEGG, reactome, and others
+# split into list 
+msig.ls <- split(x=msig.db$gene_symbol, f=msig.db$gs_name)
+
+
+
+# gsea results by cluster
+set.seed(0)
+fgseaRes <- lapply(gene.ls, function(x){
+                              fgsea(pathways=msig.ls,
+                                    stats=x, 
+                                    minSize = 15,
+                                    maxSize = 500,nPermSimple = 10000)
+})
+# select only significant pathways
+fgseaRes.2 <- lapply(fgseaRes, filter, pval<0.05)
+# add -log10(pval) column for dotplot
+fgseaRes.2 <- lapply(fgseaRes.2, mutate, neg_log=-log10(pval))
+```
+
+### plot by cluster
+```{r}
+g <- lapply(fgseaRes.2, function(x){
+            ggplot(x, mapping=aes(x=reorder(pathway, neg_log),y=neg_log, fill=NES))+
+              geom_bar(stat="identity") +
+              scale_fill_gradient2(low="blue", mid="white", high="red")+
+              geom_hline(yintercept=-log10(0.05), linetype=2)+
+              coord_flip()
+  })
+g
+```
+### save plots
+```{r}
+# path to save
+db <- "c2_curated_database_genesets"
+path1 <- file.path(path, db)
+dir.create(path1) 
+
+# file names for each
+png_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".png")))
+svg_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".svg")))
+
+# save files
+mapply(ggsave, png_outs, g, device="png", width=7, height=7)
+mapply(ggsave, svg_outs, g, device="svg", width=7, height=7)
+```
+## C6, cancer sets?
+```{r}
+# database to look at
+msig.db <- genesets_c6
+# split into list 
+msig.ls <- split(x=msig.db$gene_symbol, f=msig.db$gs_name)
+
+
+
+# gsea results by cluster
+fgseaRes0 <- fgsea(pathways=msig.ls,
+                   stats=gene.ls$cluster_0, 
+                                    minSize = 15,
+                                    maxSize = 500)
+set.seed(0)
+fgseaRes <- lapply(gene.ls, function(x){
+                              fgsea(pathways=msig.ls,
+                                    stats=x, 
+                                    minSize = 15,
+                                    maxSize = 500,nPermSimple = 10000)
+})
+# select only significant pathways
+fgseaRes.2 <- lapply(fgseaRes, filter, pval<0.05)
+# add -log10(pval) column for dotplot
+fgseaRes.2 <- lapply(fgseaRes.2, mutate, neg_log=-log10(pval))
+```
+
+### plot by cluster
+```{r}
+g <- lapply(fgseaRes.2, function(x){
+            ggplot(x, mapping=aes(x=reorder(pathway, neg_log),y=neg_log, fill=NES))+
+              geom_bar(stat="identity") +
+              scale_fill_gradient2(low="blue", mid="white", high="red")+
+              geom_hline(yintercept=-log10(0.05), linetype=2)+
+              coord_flip()
+  })
+g
+```
+### save plots
+```{r}
+# path to save
+db <- "c6_cancer_genesets"
+path1 <- file.path(path, db)
+dir.create(path1) 
+
+# file names for each
+png_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".png")))
+svg_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".svg")))
+
+# save files
+mapply(ggsave, png_outs, g, device="png", width=7, height=7)
+mapply(ggsave, svg_outs, g, device="svg", width=7, height=7)
+```
+## C7, Immune sets
+```{r}
+# database to look at
+msig.db <- genesets_c7
+# split into list 
+msig.ls <- split(x=msig.db$gene_symbol, f=msig.db$gs_name)
+
+
+
+# gsea results by cluster
+fgseaRes0 <- fgsea(pathways=msig.ls,
+                   stats=gene.ls$cluster_0, 
+                                    minSize = 15,
+                                    maxSize = 500)
+set.seed(0)
+fgseaRes <- lapply(gene.ls, function(x){
+                              fgsea(pathways=msig.ls,
+                                    stats=x, 
+                                    minSize = 15,
+                                    maxSize = 500,nPermSimple = 10000)
+})
+# select only significant pathways
+fgseaRes.2 <- lapply(fgseaRes, filter, pval<0.05)
+# add -log10(pval) column for dotplot
+fgseaRes.2 <- lapply(fgseaRes.2, mutate, neg_log=-log10(pval))
+```
+
+### plot by cluster
+```{r}
+g <- lapply(fgseaRes.2, function(x){
+            ggplot(x, mapping=aes(x=reorder(pathway, neg_log),y=neg_log, fill=NES))+
+              geom_bar(stat="identity") +
+              scale_fill_gradient2(low="blue", mid="white", high="red")+
+              geom_hline(yintercept=-log10(0.05), linetype=2)+
+              coord_flip()
+  })
+g
+```
+### save plots
+```{r}
+# path to save
+db <- "c7_immune_genesets"
+path1 <- file.path(path, db)
+dir.create(path1) 
+
+# file names for each
+png_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".png")))
+svg_outs <- lapply(names(g), function(x) file.path(path1, paste0(x, ".svg")))
+
+# save files
+mapply(ggsave, png_outs, g, device="png", width=14, height=7)
+mapply(ggsave, svg_outs, g, device="svg", width=14, height=7)
+```
+
+
+# scRepertoire
+
+
+
+
+
+
+# Make scRepertoire obj
+Using the scRertoire package to analyze repertoire data
+```{r}
+# For 10x genomics output load the filtered_contig_annotations.csv files
+## contig list
+sample1.clono <- read.csv(file.path("data/Chan_513/sample1_outs/per_sample_outs/Sample1/vdj_b/filtered_contig_annotations.csv"))
+sample1.clono$sample <- rep("ATB2")
+
+sample2.clono <- read.csv(file.path("data/Chan_513/sample2_outs/per_sample_outs/Sample2/vdj_b/filtered_contig_annotations.csv"))
+sample2.clono$sample <- rep("LTBI2")
+
+sample3.clono <- read.csv(file.path("data/Chan_328/per_sample_outs/Sample/vdj_b/filtered_contig_annotations.csv"))
+sample3.clono$sample <- rep("LTBI1")
+
+sample4.clono <- read.csv(file.path("data/Chan_531/sample1_outs/per_sample_outs/Sample1/vdj_b/filtered_contig_annotations.csv"))
+sample4.clono$sample <- rep("ATB3")
+
+sample5.clono <- read.csv(file.path("data/Chan_531/sample2_outs/per_sample_outs/Sample2/vdj_b/filtered_contig_annotations.csv"))
+sample5.clono$sample <- rep("LTBI2")
+
+contig.list <- list(sample1.clono, sample2.clono, sample3.clono, sample4.clono, sample5.clono)
+names(contig.list) <- names(barcodes.ls)
+
+## combine TB and LTBI for clonotype figure
+ltbi <- rbind(sample2.clono, sample5.clono)
+tb <- rbind(sample1.clono, sample4.clono)
+contig.list.2 <- list("ltbi"=ltbi,"tb"= tb)
+#barcodes.ls.2 <- list(barcodes.ls$LTBI2,barcodes.ls$LTBI , barcodes.ls$ATB2,barcodes.ls$ATB3 )
+# Filter contig.list by barcodes in barcodes.ls from filtered seurat objects
+
+contig.list <- mapply(function(x,y)filter(x,barcode %in% y), contig.list, barcodes.ls, SIMPLIFY = F)
+#contig.list.2 <- mapply(function(x,y)filter(x,barcode %in% y), contig.list.2, barcodes.ls, SIMPLIFY = F)
+
+
+## combine the contigs in clonotypes. scRepertoire uses distance calculations
+## (see vignette for scRepertoire, The strict definition of a clone is based on the normalized Levenshtein edit distance of CDR3 nucleotide sequences and V-gene usage. PMID: 34161770 PMCID: PMC7612943 DOI: 10.1016/j.celrep.2021.109286)
+combined.BCR <- combineBCR(contig.list, 
+                           samples = names(contig.list), 
+                           threshold = 0.85)
+combined.BCR.2 <- combineBCR(contig.list.2, 
+                           samples = names(contig.list.2), 
+                           threshold = 0.85)
+
+head(combined.BCR[[1]])
+
+
+```
+
+
+## Clonal Dynamics and visualizations
+
+### Clonal Quant
+```{r}
+path <- file.path("outs", "clonal_comparison", "clonal_quant")
+clonalQuant(combined.BCR, 
+            cloneCall="strict", 
+            chain = "both", 
+            scale = TRUE)
+ggsave(file.path(path,"percent_unique_clones_bysample.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"percent_unique_clones_bysample.svg"), width=3.5, height=3.5)
+
+```
+
+```{r}
+path <- file.path("outs", "clonal_comparison", "clonal_quant")
+clonalQuant(combined.BCR.2, 
+            cloneCall="strict", 
+            chain = "both", 
+            scale = TRUE)
+ggsave(file.path(path,"percent_unique_clones_by_status.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"percent_unique_clones_by_status.svg"), width=3.5, height=3.5)
+
+```
+### Clonal Abundance
+relative distribution of clones by abundance
+```{r}
+clonalAbundance(combined.BCR, 
+                cloneCall = "gene", 
+                scale = F) # can group.by vectors if added
+
+ggsave(file.path(path,"clonal_abundance_bysample.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_abundance_bysample.svg"), width=3.5, height=3.5)
+
+```
+```{r}
+clonalAbundance(combined.BCR.2, 
+                cloneCall = "gene", 
+                scale = F)
+
+ggsave(file.path(path,"clonal_abundance_by_status.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_abundance_by_status.svg"), width=3.5, height=3.5)
+
+```
+
+
+### Clonal Length
+length distribution; can focus on specific chain (IGH, IGL) or nucleotides or AA sequences
+
+#### Unscaled, AA, combined L and H chain
+```{r}
+clonalLength(combined.BCR, 
+             cloneCall="aa", 
+             chain = "both") 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_sample.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_sample.svg"), width=3.5, height=3.5)
+
+```
+```{r}
+clonalLength(combined.BCR.2, 
+             cloneCall="aa", 
+             chain = "both") 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_status.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_status.svg"), width=3.5, height=3.5)
+
+```
+
+### Scaled, Light chain only
+```{r}
+clonalLength(combined.BCR, 
+             cloneCall="aa", 
+             chain = "IGL", 
+             scale = TRUE) 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_sample_scaled_IGL.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_sample_scaled_IGL.svg"), width=3.5, height=3.5)
+
+```
+
+### Scaled, Heavy chain only
+```{r}
+clonalLength(combined.BCR, 
+             cloneCall="aa", 
+             chain = "IGH", 
+             scale = TRUE) 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_sample_scaled_IGH.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_sample_scaled_IGH.svg"), width=3.5, height=3.5)
+
+```
+
+### Scaled, Light chain only-by status
+```{r}
+clonalLength(combined.BCR.2, 
+             cloneCall="aa", 
+             chain = "IGL", 
+             scale = TRUE) 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_status_scaled_IGL.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_status_scaled_IGL.svg"), width=3.5, height=3.5)
+
+```
+
+### Scaled, Heavy chain only-by status
+```{r}
+clonalLength(combined.BCR.2, 
+             cloneCall="aa", 
+             chain = "IGH", 
+             scale = TRUE) 
+```
+```{r}
+ggsave(file.path(path,"clonal_length_by_status_scaled_IGH.png"), width=3.5, height=3.5)
+ggsave(file.path(path,"clonal_length_by_status_scaled_IGH.svg"), width=3.5, height=3.5)
+
+```
+## Clonal Comparison
+Sample clonal dynamics comparison; can observe specific clones if wanted or increase the number of clones to look at
+### Top 30 clones from each group
+```{r}
+#library(Cairo)
+path <- file.path("outs/clonal_comparison", "alluvial")
+dir.create(path)
+
+png(file.path(path, "alluvial_clonal_comparison_top100_by_sample.png"), res = 300, width=7, height=7, units="in")#, type="cairo-png")
+clonalCompare(combined.BCR, 
+                  top.clones = 100, 
+                  #samples = c("S1", "S2", "S3"), #Specific samples?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+dev.off()
+
+#svg(file.path(path, "alluvial_clonal_comparison_top30.svg"), width=7, height=7)
+clonalCompare(combined.BCR, 
+                  top.clones = 100, 
+                  #samples = c("S1", "S2", "S3"), #Specific samples?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+
+ggsave(file.path(path, "alluvial_clonal_comparison_top30_by_sample.svg"), width=7, height=7)
+
+
+
+```
+
+### Top 1000 clones
+```{r}
+png(file.path(path, "alluvial_clonal_comparison_top1k_by_sample.png"), res = 300, width=7, height=7, units="in")#, type="cairo-png")
+clonalCompare(combined.BCR, 
+                  top.clones = 1000, 
+                 # samples = c("S1", "S2", "S3"), #Specific samples?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+dev.off()
+#svg(file.path(path, "alluvial_clonal_comparison_top1k.svg"),  width=7, height=7)
+clonalCompare(combined.BCR, 
+                  top.clones = 1000, 
+                 # samples = c("S1", "S2", "S3"), #Specific samples?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+#dev.off()
+ggsave(file.path(path, "alluvial_clonal_comparison_top1k_by_sample.svg"),  width=7, height=7)
+```
+### Top 30 clones from each group
+```{r}
+#library(Cairo)
+path <- file.path("outs/clonal_comparison", "alluvial")
+
+
+png(file.path(path, "alluvial_clonal_comparison_top100_by_status.png"), res = 300, width=7, height=7, units="in")#, type="cairo-png")
+clonalCompare(combined.BCR.2, 
+                  top.clones = 100, 
+                  #statuss = c("S1", "S2", "S3"), #Specific statuss?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+dev.off()
+
+#svg(file.path(path, "alluvial_clonal_comparison_top30.svg"), width=7, height=7)
+clonalCompare(combined.BCR.2, 
+                  top.clones = 100, 
+                  #statuss = c("S1", "S2", "S3"), #Specific statuss?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+
+ggsave(file.path(path, "alluvial_clonal_comparison_top30_by_status.svg"), width=7, height=7)
+
+
+
+```
+
+### Top 1000 clones
+```{r}
+png(file.path(path, "alluvial_clonal_comparison_top1k_by_status.png"), res = 300, width=7, height=7, units="in")#, type="cairo-png")
+clonalCompare(combined.BCR.2, 
+                  top.clones = 1000, 
+                 # statuss = c("S1", "S2", "S3"), #Specific statuss?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+dev.off()
+#svg(file.path(path, "alluvial_clonal_comparison_top1k_by_status.svg"),  width=7, height=7)
+clonalCompare(combined.BCR.2, 
+                  top.clones = 1000, 
+                 # statuss = c("S1", "S2", "S3"), #Specific statuss?
+                  cloneCall="aa", 
+                  graph = "alluvial") + theme(legend.position = "none")
+#dev.off()
+ggsave(file.path(path, "alluvial_clonal_comparison_top1k_by_status.svg"),  width=7, height=7)
+```
+### Clonal Scatter
+### sample1 vs sample2
+```{r}
+path <- file.path("outs/clonal_comparison/scatter")
+png(file.path(path, "clonal_scatter_s1vs2.png"), res = 300, width=7, height=7, units="in", type="cairo-png")
+clonalScatter(combined.BCR, 
+              cloneCall ="gene", 
+             # x.axis = "S1", 
+              #y.axis = "S2",
+              dot.size = "total",
+              graph = "proportion")
+dev.off()
+
+
+svg(file.path(path, "clonal_scatter_s1vs2.svg"), width=7, height=7)
+clonalScatter(combined.BCR, 
+              cloneCall ="gene", 
+              x.axis = "S1", 
+              y.axis = "S2",
+              dot.size = "total",
+              graph = "proportion")
+dev.off()
+
+
+
+
+```
+### sample1 vs sample3
+```{r}
+png(file.path(path, "clonal_scatter_s1vs3.png"), res = 300, width=7, height=7, units="in", type="cairo-png")
+clonalScatter(combined.BCR, 
+              cloneCall ="gene", 
+              x.axis = "S1", 
+              y.axis = "S3",
+              dot.size = "total",
+              graph = "proportion") # or count
+dev.off()
+```
+### Sample 2 vs 3
+```{r}
+png(file.path(path, "clonal_scatter_s2vs3.png"), res = 300, width=7, height=7, units="in", type="cairo-png")
+clonalScatter(combined.BCR, 
+              cloneCall ="gene", 
+              x.axis = "S2", 
+              y.axis = "S3",
+              dot.size = "total",
+              graph = "proportion")
+dev.off()
+
+svg(file.path(path, "clonal_scatter_s2vs3.svg"),  width=7, height=7)
+clonalScatter(combined.BCR, 
+              cloneCall ="gene", 
+              x.axis = "S2", 
+              y.axis = "S3",
+              dot.size = "total",
+              graph = "proportion")
+dev.off()
+```
+
+
+### status
+```{r}
+#png(file.path(path, "clonal_scatter_ltbi_vs_tb.png"), res = 300, width=7, height=7, units="in", type="cairo-png")
+clonalScatter(combined.BCR.2, 
+              cloneCall ="gene", 
+              x.axis = "tb", 
+              y.axis = "ltbi",
+              dot.size = "total",
+              graph = "proportion")
+#dev.off()
+ggsave(file.path(path, "clonal_scatter_ltbi_vs_tb.png"), width=3.5, height=3.5)
+ggsave(file.path(path, "clonal_scatter_ltbi_vs_tb.svg"), width=3.5, height=3.57)
+
+```
+
+
+## Visualizing Clonal Dynamics
+
+### clonalHomeostasis
+By examining the clonal space, we effectively look at the relative space occupied by clones at specific proportions. Another way to think about this would be to think of the total immune receptor sequencing run as a measuring cup. In this cup, we will fill liquids of different viscosity - or different numbers of clonal proportions. Clonal space homeostasis asks what percentage of the cup is filled by clones in distinct proportions (or liquids of different viscosity, to extend the analogy). The proportional cut points are set under the cloneSize variable in the function and can be adjusted.
+
+cloneSize
+
+Rare = 0.0001
+Small = 0.001
+Medium = 0.01
+Large = 0.1
+Hyperexpanded = 1
+
+```{r}
+clonalHomeostasis(combined.BCR, 
+                  cloneCall = "gene") # can change the clone size of groups, and select different groups (LTBI, TB, HC)
+```
+### Clonal proportion
+
+```{r}
+clonalProportion(combined.BCR, 
+                 cloneCall = "gene") 
+```
+### Clonal proportion by nucleotide, split by custom indices (top 1, top 5)
+
+```{r}
+clonalProportion(combined.BCR, 
+                 cloneCall = "nt",
+                 clonalSplit = c(1, 5, 10, 100, 1000, 10000)) 
+
+```
+
+
+
+## Summarizing Repertoires
+### percentAA
+Quantify the proportion of amino acids along the cdr3 sequence with percentAA(). By default, the function will pad the sequences with NAs up to the maximum of aa.length. Sequences longer than aa.length will be removed before visualization (default aa.length = 20).
+#### IGH
+```{r}
+percentAA(combined.BCR, 
+          chain = "IGH", 
+          aa.length = 30) # find out what these are part of (CDR3?)
+```
+
+#### IGL
+```{r}
+percentAA(combined.BCR, 
+          chain = "IGL", 
+          aa.length = 15)
+
+```
+### positionalEntropy
+We can also quantify the level of entropy/diversity across amino acid residues along the cdr3 sequence. positionalEntropy() combines the quantification by residue of percentAA() with the diversity calls in clonalDiversity().
+
+method
+
+“shannon” - Shannon Diversity
+“inv.simpson” - Inverse Simpson Diversity
+“norm.entropy” - Normalized Entropy
+
+```{r}
+positionalEntropy(combined.BCR, 
+                  chain = "IGH", 
+                  aa.length = 20)
+```
+```{r}
+positionalEntropy(combined.BCR.2, 
+                  chain = "IGH", 
+                  aa.length = 20)
+```
+### positionalProperty
+Like positionalEntropy(), we can also examine a series of amino acid properties along the cdr3 sequences using positionalProperty(). Important differences from the above function for positionalProperty() is dropping NA values as they would void the mean calculation. positionalProperty() also display a ribbon with the 95% confidence interval surrounding the mean value for the selected properties.
+
+method
+
+“Atchley” - Atchley Factors
+“Kidera” - Kidera Factors
+“stScales” - stScales Vectors
+“tScales” - tScales Vectors
+“VHSE” - Vectors of Hydrophobic, Steric, and Electronic properties
+
+```{r}
+positionalProperty(combined.BCR.2, 
+                  chain = "IGH", 
+                  aa.length = 20, 
+                  method = "VHSE") + 
+  scale_color_manual(values = hcl.colors(5, "inferno")[c(2,4,6)])
+```
+
+### vizGenes
+A visualization of the relative usage of genes of the TCR or BCR, using vizGenes(). There is some functional crossover between vizGenes() and two functions below called percentGenes() and percentVJ(). But vizGenes() is more adaptable to allow for comparisons across chains, scaling, etc.
+
+x.axis
+
+Gene segment to separate the x-axis, such as “TRAV”, “TRBD”, “IGKJ”
+y.axis
+
+Gene segment or categorical variable to visualize along the y-axis
+plot
+
+“barplot” for a bar chart
+“heatmap” for a heatmap
+scale
+
+TRUE to scale the graph by number of genes per sample
+FALSE to report raw numbers
+order
+
+“gene” to order by gene name
+“variance” to order by variance between the separate variable categories
+```{r}
+path <- file.path("outs","gene_visualization")
+#dir.create(path)
+
+vizGenes(combined.BCR.2, 
+         x.axis = "IGHV",
+         y.axis = NULL,
+         plot = "barplot",  
+         scale = TRUE)
+ggsave(file.path(path, "IGHV_by_status.svg"), width=14, height=7)
+ggsave(file.path(path, "IGHV_by_status.png"), width=14, height=7)
+
+
+```
+```{r}
+#png(file.path(path, "IGLV_by_status.png"), res = 300, width=14, height=7, units="in", type="cairo-png")
+vizGenes(combined.BCR.2, 
+         x.axis = "IGLV",
+         y.axis = NULL,
+         plot = "barplot",  
+         scale = TRUE)
+#dev.off()
+ggsave(file.path(path, "IGLV_by_status.png"), width=14, height=7)
+ggsave(file.path(path, "IGLV_by_status.svg"), width=14, height=7)
+
+
+```
+### combined IGHV and IGLV 
+To determine what IGH/L chains are expressed at the same time
+```{r}
+png(file.path(path, "HV_LV_coexpression_s1.png"), width=7, height=7, units="in", res = 300)
+vizGenes(combined.BCR[c(1)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+svg(file.path(path, "HV_LV_coexpression_s1.svg"), width=7, height=7)
+vizGenes(combined.BCR[c(1)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+
+png(file.path(path, "HV_LV_coexpression_s2.png"), width=7, height=7, units="in", res = 300)
+vizGenes(combined.BCR[c(2)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+svg(file.path(path, "HV_LV_coexpression_s2.svg"), width=7, height=7)
+vizGenes(combined.BCR[c(2)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+
+png(file.path(path, "HV_LV_coexpression_s3.png"), width=7, height=7, units="in", res = 300)
+vizGenes(combined.BCR[c(3)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+svg(file.path(path, "HV_LV_coexpression_s3.svg"), width=7, height=7)
+vizGenes(combined.BCR[c(3)], # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+dev.off()
+
+```
+
+
+```{r}
+#png(file.path(path, "HV_LV_coexpression_s1.png"), width=7, height=7, units="in", res = 300)
+vizGenes(combined.BCR.2, # sample1/2
+         x.axis = "IGHV",
+         y.axis = "IGLV",
+         plot = "heatmap", 
+         scale = T)
+ggsave(file.path(path, "HV_LV_coexpression_TB_vs_LTBI.png"), width=7, height=7)
+ggsave(file.path(path, "HV_LV_coexpression_TB_vs_LTBI.svg"), width=7, height=7)
+
+```
+### percentGenes
+Quantify the proportion of V or J gene usage with percentGenes(). Like percentAA(), we select the chain of interest and then indicate the gene of interest with the gene parameter. Two major limitations of percentGenes() are, 1) the function quantifies only V or J genes, and 2) the quantification of the genes are limited to all the V or J genes seen across the samples, not all possible V or J genes.
+```{r}
+percentGenes(combined.BCR.2, 
+             chain = "IGH", 
+             gene = "Vgene")
+ggsave(file.path(path, "heatmap_percentage_use_by_status_IGHV.png"), width=3.5, height=3.5)
+```
+
+### Percent of variable gene across all 3
+```{r}
+percentGenes(combined.BCR.2, 
+             chain = "IGH", 
+             gene = "Vgene")
+
+```
+### Light chain 
+```{r}
+percentGenes(combined.BCR.2, 
+             chain = "IGL", 
+             gene = "Vgene")
+ggsave(file.path(path, "heatmap_percentage_use_by_status_IGLV.png"), width=3.5, height=3.5)
+
+```
+
+### Light chain, all 3
+```{r}
+percentGenes(combined.BCR, 
+             chain = "IGL", 
+             gene = "Vgene")
+```
+We can also use the output percentGenes() for dimensional reduction to summarise the gene usage by sample. This can be done with a simple principal component analysis (below) or even more complex reductions.
+
+```{r}
+df.genes <- percentGenes(combined.BCR, 
+                         chain = "IGH", 
+                         gene = "Vgene", 
+                         exportTable = TRUE)
+
+#Performing PCA
+pc <- prcomp(df.genes)
+
+#Getting data frame to plot from
+df <- as.data.frame(cbind(pc$x[,1:2], rownames(df.genes)))
+df$PC1 <- as.numeric(df$PC1)
+df$PC2 <- as.numeric(df$PC2)
+
+#Plotting
+ggplot(df, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(fill =df[,3]), shape = 21, size = 5) + 
+  guides(fill=guide_legend(title="Samples")) + 
+  scale_fill_manual(values = hcl.colors(nrow(df), "inferno")) + 
+  theme_classic() 
+
+```
+
+```{r}
+df.genes <- percentGenes(combined.BCR, 
+                         chain = "IGL", 
+                         gene = "Vgene", 
+                         exportTable = TRUE)
+
+#Performing PCA
+pc <- prcomp(df.genes)
+
+#Getting data frame to plot from
+df <- as.data.frame(cbind(pc$x[,1:2], rownames(df.genes)))
+df$PC1 <- as.numeric(df$PC1)
+df$PC2 <- as.numeric(df$PC2)
+
+#Plotting
+ggplot(df, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(fill =df[,3]), shape = 21, size = 5) + 
+  guides(fill=guide_legend(title="Samples")) + 
+  scale_fill_manual(values = hcl.colors(nrow(df), "inferno")) + 
+  theme_classic() 
+
+```
+
+```{r}
+percentVJ(combined.BCR.2, 
+          chain = "IGH")
+```
+
+
+### percentKmer
+Another quantification of the composition of the CDR3 sequence is to define motifs by sliding across the amino acid or nucleotide sequences at set intervals resulting in substrings or kmers.
+
+motif.length
+
+Numerical value for the length of the kmer.
+top.motifs
+
+Display the most variable genes determined by mean absolute deviation (MAD).
+```{r}
+percentKmer(combined.BCR, 
+            cloneCall = "aa",
+            chain = "IGH", 
+            motif.length = 5, 
+            top.motifs = 25)
+```
+```{r}
+percentKmer(combined.BCR.2, 
+            cloneCall = "aa",
+            chain = "IGH", 
+            motif.length = 5, 
+            top.motifs = 25)
+```
+
+```{r}
+percentKmer(combined.BCR, 
+            cloneCall = "aa",
+            chain = "IGL", 
+            motif.length = 5, 
+            top.motifs = 25)
+```
+
+## Clonal Diversity, Rarefication, and Overlap
+### clonalDiversity
+
+Diversity can also be measured for samples or by other variables. Diversity metrics calculated, include: “shannon”, “inv.simpson”, “norm.entropy”, “gini.simpson”, “chao1”, and “ACE”. Please see the manual for more information on each metric and the underlying calculations.
+
+Inherent in diversity calculations is a bias for increasing diversity with increasing repertoire size. clonalDiversity() will automatically downsample to the smallest repertoire size and perform bootstrapping to return the mean diversity estimates. If the output of diversity values are strange or minimally variable, it is likely due to a sample with small repertoire size.
+
+n.boots
+The number of calculations to perform (default = 100).
+
+return.boots
+
+TRUE: Return all the calculations.
+FALSE: Return only the mean values (default).
+skip.boots
+Skip the bootstrapping calculations.
+
+```{r}
+path <- file.path("outs/clonal_diversity")
+clonalDiversity(combined.BCR, 
+                cloneCall = "gene")
+ggsave(file.path(path, "clonal_diversity.png"), width=7, height=7)
+```
+### Rarefication
+
+We can also use Hill numbers to estimate the rarefaction, or estimating species richness, using the the abundance of clones across groupings. Underlying the rarefaction calculation is the use of observed receptor of abundance to compute diversity.
+
+hill.numbers
+
+0 - species-richness
+1 - Shannon Diversity
+2 - Simpson Diversity
+plot.type
+
+1 - sample-size-based rarefaction/extrapolation
+2 - sample completeness curve
+3 - coverage-based rarefaction/extrapolation curve
+This function relies on the iNEXT with the accompanying manuscript. Like the other wrapping functions in scRepertoire, please cite the original work. The sample completeness curve (plot.type = 2), may not show full sample coverage due to the size/diversity of the input data.
+
+```{r}
+clonalRarefaction(combined.BCR,
+                  plot.type = 1,
+                  hill.numbers = 0,
+                  n.boots = 2)
+```
+
+```{r}
+clonalRarefaction(combined.BCR,
+                  plot.type = 2,
+                  hill.numbers = 0,
+                  n.boots = 2)
+```
+```{r}
+clonalRarefaction(combined.BCR,
+                  plot.type = 3,
+                  hill.numbers = 0,
+                  n.boots = 2)
+```
+### clonalSizeDistribution
+Another method for modeling the repertoire distribution is a discrete gamma-GPD spliced threshold model, proposed by Koch et al. The spliced model models the repertoire and allows for the application of a power law distribution for larger clonal-expanded sequences and a Poisson distribution for smaller clones. After fitting the models, repertoires can be compared using Euclidean distance.
+
+If using this function, please read/cite Koch et al. and check out the powerTCR R package.
+
+```{r}
+clonalSizeDistribution(combined.BCR, 
+                       cloneCall = "aa", 
+                       method= "ward.D2")
+```
+### clonalOverlap
+If you are interested in measures of similarity between the samples loaded into scRepertoire, using clonalOverlap() can assist in the visualization.
+
+The underlying clonalOverlap() calculation varies by the method parameter, more information on the exact calculations are available in the manual.
+
+method
+
+“overlap” - overlap coefficient
+“morisita” - Morisita’s overlap index
+“jaccard” - Jaccard index
+“cosine” - cosine similarity
+“raw” - exact number of overlapping clones
+```{r}
+clonalOverlap(combined.BCR, 
+              cloneCall = "strict", 
+              method = "jaccard")
+```
+
+
+## Clustering sequences by edit overlap
+The nucleotide or amino acid sequences of the chains can be used to cluster clonotypes by examining the edit distance of the sequences. This approach is underlying the combineBCR() function but now can be applied to the B or T cell receptors at the level of nucleotides (sequence = “nt”) or amino acids (sequence = “aa”). It will add a cluster to the end of each list element by generating a network connected by the similarity in sequence. This network is directed by the threshold variable, where 0.85 is the normalized mean edit distance.
+
+Edit-distance based clusters will have the following format:
+
+[chain:] + :Cluster + [number] e.g., TRA:Cluster.1
+Cluster denotes if the cluster was called using the normalized Levenshtein distance, which takes the edit distance calculated between 2 sequences and divides that by the mean of the sequence lengths. Unconnected sequences will have NA values.
+
+
+```{r}
+sub_combined <- clonalCluster(combined.BCR[[2]], 
+                              chain = "IGH", 
+                              sequence = "aa", 
+                              threshold = 0.85, 
+                              group.by = NULL)
+
+head(sub_combined[,c(1,2,13)])
+```
+
+```{r}
+igraph.object <- clonalCluster(combined.BCR,
+                               chain = "IGH",
+                               sequence = "aa",
+                               group.by = "sample",
+                               threshold = 0.85, 
+                               exportGraph = TRUE)
+
+#Setting color scheme
+col_legend <- factor(igraph::V(igraph.object)$group)
+col_samples <- hcl.colors(3,"inferno")[as.numeric(col_legend)]
+color.legend <- factor(unique(igraph::V(igraph.object)$group))
+
+#Plotting
+plot(
+  igraph.object,
+  vertex.size     = sqrt(igraph::V(igraph.object)$size),
+  vertex.label    = NA,
+  edge.arrow.size = .25,
+  vertex.color    = col_samples
+)
+legend("topleft", legend = levels(color.legend), pch = 16, col = unique(col_samples), bty = "n")
+```
+```{r}
+igraph.object <- clonalCluster(combined.BCR,
+                               chain = "IGL",
+                               sequence = "aa",
+                               group.by = "sample",
+                               threshold = 0.85, 
+                               exportGraph = TRUE)
+
+#Setting color scheme
+col_legend <- factor(igraph::V(igraph.object)$group)
+col_samples <- hcl.colors(3,"inferno")[as.numeric(col_legend)]
+color.legend <- factor(unique(igraph::V(igraph.object)$group))
+
+#Plotting
+plot(
+  igraph.object,
+  vertex.size     = sqrt(igraph::V(igraph.object)$size),
+  vertex.label    = NA,
+  edge.arrow.size = .25,
+  vertex.color    = col_samples
+)
+legend("topleft", legend = levels(color.legend), pch = 16, col = unique(col_samples), bty = "n")
+```
+
+# Variability of C gene
+```{r}
+ls <- contig.list[[1]]
+
+```
+
+# Immunarch
+```{r}
+library(immunarch)
+
+```
+## load data
+```{r}
+
+# 1.2) Replace with the path to your processed 10x data or to the clonotypes file
+file_path = list(sample1=file.path("data/cellranger_outs/Chan_scRNA_240513_TarinaGEXVDJBCells/cellranger_outs/sample1_outs/per_sample_outs/Sample1/vdj_b/filtered_contig_annotations.csv"), sample2=file.path("data/cellranger_outs/Chan_scRNA_240513_TarinaGEXVDJBCells/cellranger_outs/sample2_outs/per_sample_outs/Sample2/vdj_b/filtered_contig_annotations.csv"), sample3=file.path("data/cellranger_outs/Chan_scRNA_240328_TarinaGEXVDJBCells/per_sample_outs/Sample/vdj_b/filtered_contig_annotations.csv"))
+
+View(sample1.clono)
+chrs$endsnp = paste0('end', chrs$endsnp)
+sample1.clono$barcode <- paste0('TB_', sample1.clono$barcode)
+sample1.clono$contig_id <- paste0('TB_', sample1.clono$contig_id)
+sample2.clono$barcode <- paste0('LTBI_', sample2.clono$barcode)
+sample2.clono$contig_id <- paste0('LTBI_', sample2.clono$contig_id)
+sample328.clono$barcode <- paste0('S3_', sample328.clono$barcode)
+sample328.clono$contig_id <- paste0('S3_', sample328.clono$contig_id)
+
+write.csv( sample1.clono,file.path("data_processed", "immunarch", "immunarch_s1_filtered_contig_annotations.csv"))
+write.csv( sample2.clono,file.path("data_processed", "immunarch", "immunarch_s2_filtered_contig_annotations.csv"))
+write.csv( sample328.clono,file.path("data_processed", "immunarch", "immunarch_s3_filtered_contig_annotations.csv"))
+
+"metadata.txt" 
+metadata <- data.frame(sample=c("sample1", "sample2", "sample3"),
+                       status=c("ATB", "LTBI", "LTBI"))
+write_tsv(metadata, "data_processed/immunarch/metadata.txt")
+
+file.paths <- list(sample1 =file.path("data_processed", "immunarch", "immunarch_s1_filtered_contig_annotations.csv"),
+                  sample2=file.path("data_processed", "immunarch","immunarch_s2_filtered_contig_annotations.csv"),
+                  sample3=file.path("data_processed", "immunarch","immunarch_s3_filtered_contig_annotations.csv"))
+
+ls <- lapply(file.paths, read.csv )
+filepath <- fs::dir_ls("data_processed/immunarch/")
+filepath <- file.path("data_processed/immunarch/")
+# 1.3) Load 10x data with repLoad
+bcrdata1 <- repLoad(file_path$sample1)
+bcrdata2 <- repLoad(file_path$sample2)
+bcrdata3 <- repLoad(file_path$sample3)
+
+
+names(bcrdata1$data) <- "sample1"
+names(bcrdata2$data) <- "sample2"
+names(bcrdata3$data) <- "sample3"
+
+bcrdata1$data$s1$sample <- "s1"
+bcrdata2$data$s2$sample <- "s2"
+bcrdata2$data$s3$sample <- "s3"
+
+comb <- list()
+comb$data <- list(sample1=bcrdata1$data$s1,
+                  sample2=bcrdata2$data$sample2,
+                  sample3=bcrdata3$data$sample3)
+comb$meta <- metadata
+
+bcrdata <- comb
+```
+## Reconstructing clonal lineages
+```{r}
+#calulate distance matrix
+distBCR <- seqDist(bcrdata$data %>% top(500))
+
+#find clusters
+bcrdata$data <- seqCluster(bcrdata$data %>% top(500), distBCR, .perc_similarity = 0.9)
+```
+## Building germline
+```{r}
+#generate germline
+
+x <- bcrdata$data[[1]] %>%
+     top(2) %>%
+     repGermline(.threads = 1) %>% .$full_clones %>% .$Germline.sequence
+
+```
+
+
+# SessionInfo
+```{r}
+sessionInfo()
+```
+
+
